@@ -11,6 +11,7 @@ import ru.testtask.cards.dataaccess.repository.CardRepository;
 import ru.testtask.cards.dataaccess.repository.UserRepository;
 import ru.testtask.cards.service.entity.Card;
 import ru.testtask.cards.service.mapper.CardMapper;
+import ru.testtask.cards.utilits.encription.CardEncryptionUtil;
 import ru.testtask.cards.utilits.enums.CardStatus;
 import ru.testtask.cards.utilits.enums.PaymentStatus;
 
@@ -34,7 +35,7 @@ public class CardService {
         repository.save(CardMapper.toData(card));
     }
 
-    public List<Card> getAllCards(Long userId) {
+    public List<Card> getAllUsersCards(Long userId) {
         UserEntity userEntity = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
 
@@ -43,12 +44,30 @@ public class CardService {
                 .collect(Collectors.toList());
     }
 
-    public void showTransaction(Long userId, Long cardId) {
+    public List<CardWithTransactionsDTO> getAllAdminCards() { // получаем все карты со всеми транзакциями
+        return repository.findAll()
+                .stream()
+                .map(card -> {
+                    List<PaymentsEntity> allTransactions = Stream.concat(
+                                    card.getOutgoingPayments().stream(),
+                                    card.getIncomingPayments().stream())
+                            .sorted(Comparator.comparing(PaymentsEntity::getTimestamp))
+                            .collect(Collectors.toList());
+                    return new CardWithTransactionsDTO(CardMapper.toService(card), allTransactions);
+                })
+                .collect(Collectors.toList());
+    }
+
+
+    public CardWithTransactionsDTO showTransaction(Long userId, String cardNum) {
+
         UserEntity userEntity = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
 
-        var cardEntity = repository.findById(cardId)
-                .orElseThrow(() -> new RuntimeException("Card not found with id: " + cardId));
+
+        var encrypt = CardEncryptionUtil.encrypt(cardNum);
+        var cardEntity = repository.findCardEntitiesByEncryptedCardNumber(encrypt)
+                .orElseThrow(() -> new RuntimeException("Card not found with num: " + cardNum));
 
         if (!cardEntity.getUser().getId().equals(userId)) {
             throw new RuntimeException("User is not the owner of the card");
@@ -59,25 +78,32 @@ public class CardService {
                 .sorted(Comparator.comparing(PaymentsEntity::getTimestamp))
                 .collect(Collectors.toList());
 
+        return new CardWithTransactionsDTO(CardMapper.toService(cardEntity), allTransactions);
+
         //TODO
         // сделать преобразование PaymentsEntity в Payments
+        // что бы не возвращать сущность базы
     }
 
+
     @Transactional
-    public void makeTransfer(Long userId, Long cardIdFrom, Long cardIdTo, BigDecimal amount) {
+    public void makeTransfer(Long userId, String cardNumberFrom, String cardNumberTo, BigDecimal amount) {
 
         var userEntity = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
 
-        var cardFromEntity = repository.findById(cardIdFrom)
-                .orElseThrow(() -> new RuntimeException("Card not found with id: " + cardIdFrom));
+        var encryptFrom = CardEncryptionUtil.encrypt(cardNumberFrom);
 
-        var cardToEntity = repository.findById(cardIdTo)
-                .orElseThrow(() -> new RuntimeException("Card not found with id: " + cardIdTo));
+        var cardFromEntity = repository.findCardEntitiesByEncryptedCardNumber(encryptFrom)
+                .orElseThrow(() -> new RuntimeException("Card not found with num: " + cardNumberFrom));
 
         if (!cardFromEntity.getUser().getId().equals(userId)) {
             throw new RuntimeException("User is not the owner of the card");
         }
+
+        var encryptTo = CardEncryptionUtil.encrypt(cardNumberTo);
+        var cardToEntity = repository.findCardEntitiesByEncryptedCardNumber(encryptTo)
+                .orElseThrow(() -> new RuntimeException("Card not found with num: " + cardNumberTo));
 
         if (!cardToEntity.getUser().getId().equals(userId)) {
             throw new RuntimeException("User is not the owner of the card");
@@ -96,18 +122,25 @@ public class CardService {
     }
 
     private boolean canMakeTransfer(BigDecimal amount, CardEntity cardFromEntity, PaymentsEntity payment, CardEntity cardToEntity) {
+        // если есть нужная сумма
         if (cardFromEntity.getAmount().compareTo(amount) < 0) {
             paymentService.failPayment(payment.getId());
             return false;
         }
+        // если карты активны
         if (cardFromEntity.getStatus() != CardStatus.ACTIVE && cardToEntity.getStatus() != CardStatus.ACTIVE) {
             paymentService.failPayment(payment.getId());
             return false;
         }
-
+        // если сумма не превышает установленные лимиты
         if (amount.compareTo(cardFromEntity.getDailyLimit()) > 0 ||
                 amount.compareTo(cardFromEntity.getWeeklyLimit()) > 0 ||
                 amount.compareTo(cardFromEntity.getMonthlyLimit()) > 0) {
+            paymentService.failPayment(payment.getId());
+            return false;
+        }
+        // если сумма не превышает остаток от лимита
+        if (!paymentService.canMakeTransferByLimits(cardFromEntity, amount)) {
             paymentService.failPayment(payment.getId());
             return false;
         }
@@ -118,16 +151,8 @@ public class CardService {
         var newFromAmount = cardFromEntity.getAmount().subtract(amount);
         var newToAmount = cardToEntity.getAmount().add(amount);
 
-        var dailyLimit = cardFromEntity.getDailyLimit().subtract(amount);
-        var weeklyLimit = cardFromEntity.getDailyLimit().subtract(amount);
-        var monthlyLimit = cardFromEntity.getDailyLimit().subtract(amount);
-
         cardFromEntity.setAmount(newFromAmount);
         cardToEntity.setAmount(newToAmount);
-
-        cardFromEntity.setDailyLimit(dailyLimit);
-        cardFromEntity.setWeeklyLimit(weeklyLimit);
-        cardFromEntity.setMonthlyLimit(monthlyLimit);
 
         repository.save(cardFromEntity);
         repository.save(cardToEntity);
@@ -135,4 +160,6 @@ public class CardService {
         payment.setStatus(PaymentStatus.SUCCESS);
         paymentService.savePayment(payment);
     }
+
+
 }
