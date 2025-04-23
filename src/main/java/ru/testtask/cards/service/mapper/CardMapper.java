@@ -18,7 +18,12 @@ public class CardMapper {
                 card.getAmount(),
                 card.getOutgoingPayments(),
                 card.getIncomingPayments(),
-                card.getUser()
+                card.getUser(),
+                card.getEffectiveDate(),
+                card.getDailyLimit(),
+                card.getWeeklyLimit(),
+                card.getMonthlyLimit()
+
         );
     }
 
@@ -34,7 +39,11 @@ public class CardMapper {
                entity.getAmount(),
                entity.getOutgoingPayments(),
                entity.getIncomingPayments(),
-               entity.getUser()
+               entity.getUser(),
+               entity.getEffectiveDate(),
+               entity.getDailyLimit(),
+               entity.getWeeklyLimit(),
+               entity.getMonthlyLimit()
        );
     }
 

@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import ru.testtask.cards.dataaccess.entity.CardEntity;
 import ru.testtask.cards.dataaccess.entity.PaymentsEntity;
 import ru.testtask.cards.dataaccess.entity.UserEntity;
 import ru.testtask.cards.dataaccess.repository.CardRepository;
@@ -29,6 +30,7 @@ public class CardService {
 
 
     public void create(Card card) {
+        //TODO
         repository.save(CardMapper.toData(card));
     }
 
@@ -56,6 +58,9 @@ public class CardService {
                         cardEntity.getIncomingPayments().stream())
                 .sorted(Comparator.comparing(PaymentsEntity::getTimestamp))
                 .collect(Collectors.toList());
+
+        //TODO
+        // сделать преобразование PaymentsEntity в Payments
     }
 
     @Transactional
@@ -78,34 +83,56 @@ public class CardService {
             throw new RuntimeException("User is not the owner of the card");
         }
 
-        var payment =  paymentService.createPendingPayment(cardFromEntity, cardToEntity, amount);
-        //так же надо обработать лимит
-        if (cardFromEntity.getAmount().compareTo(amount) < 0){
-            paymentService.failPayment(payment.getId());
-            return;
-        }
-        if (cardFromEntity.getStatus() != CardStatus.ACTIVE && cardToEntity.getStatus() != CardStatus.ACTIVE){
-            paymentService.failPayment(payment.getId());
-            return;
-        }
+        var payment = paymentService.createPendingPayment(cardFromEntity, cardToEntity, amount);
+
+        if (!canMakeTransfer(amount, cardFromEntity, payment, cardToEntity)) return;
+
         try {
-            var newFromAmount = cardFromEntity.getAmount().subtract(amount);
-            var newToAmount = cardToEntity.getAmount().add(amount);
+            updateCardAmountAndLimits(amount, cardFromEntity, cardToEntity, payment);
 
-            cardFromEntity.setAmount(newFromAmount);
-            cardToEntity.setAmount(newToAmount);
-
-            repository.save(cardFromEntity);
-            repository.save(cardToEntity);
-            payment.setStatus(PaymentStatus.SUCCESS);
-            paymentService.savePayment(payment);
         } catch (RuntimeException e) {
             paymentService.failPayment(payment.getId());
         }
     }
 
-    // собрать маппер для транзакций и там обработать это
+    private boolean canMakeTransfer(BigDecimal amount, CardEntity cardFromEntity, PaymentsEntity payment, CardEntity cardToEntity) {
+        if (cardFromEntity.getAmount().compareTo(amount) < 0) {
+            paymentService.failPayment(payment.getId());
+            return false;
+        }
+        if (cardFromEntity.getStatus() != CardStatus.ACTIVE && cardToEntity.getStatus() != CardStatus.ACTIVE) {
+            paymentService.failPayment(payment.getId());
+            return false;
+        }
 
+        if (amount.compareTo(cardFromEntity.getDailyLimit()) > 0 ||
+                amount.compareTo(cardFromEntity.getWeeklyLimit()) > 0 ||
+                amount.compareTo(cardFromEntity.getMonthlyLimit()) > 0) {
+            paymentService.failPayment(payment.getId());
+            return false;
+        }
+        return true;
+    }
 
+    private void updateCardAmountAndLimits(BigDecimal amount, CardEntity cardFromEntity, CardEntity cardToEntity, PaymentsEntity payment) {
+        var newFromAmount = cardFromEntity.getAmount().subtract(amount);
+        var newToAmount = cardToEntity.getAmount().add(amount);
 
+        var dailyLimit = cardFromEntity.getDailyLimit().subtract(amount);
+        var weeklyLimit = cardFromEntity.getDailyLimit().subtract(amount);
+        var monthlyLimit = cardFromEntity.getDailyLimit().subtract(amount);
+
+        cardFromEntity.setAmount(newFromAmount);
+        cardToEntity.setAmount(newToAmount);
+
+        cardFromEntity.setDailyLimit(dailyLimit);
+        cardFromEntity.setWeeklyLimit(weeklyLimit);
+        cardFromEntity.setMonthlyLimit(monthlyLimit);
+
+        repository.save(cardFromEntity);
+        repository.save(cardToEntity);
+
+        payment.setStatus(PaymentStatus.SUCCESS);
+        paymentService.savePayment(payment);
+    }
 }

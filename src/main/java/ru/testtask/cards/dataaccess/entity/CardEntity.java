@@ -9,6 +9,7 @@ import ru.testtask.cards.utilits.enums.CardStatus;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,4 +35,10 @@ public class CardEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     UserEntity user;
+
+    //Limits
+    private LocalDateTime effectiveDate;
+    private BigDecimal dailyLimit;
+    private BigDecimal weeklyLimit;
+    private BigDecimal monthlyLimit;
 }
