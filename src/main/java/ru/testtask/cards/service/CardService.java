@@ -9,6 +9,7 @@ import ru.testtask.cards.dataaccess.entity.PaymentsEntity;
 import ru.testtask.cards.dataaccess.entity.UserEntity;
 import ru.testtask.cards.dataaccess.repository.CardRepository;
 import ru.testtask.cards.dataaccess.repository.UserRepository;
+import ru.testtask.cards.service.dto.CardWithTransactionsDTO;
 import ru.testtask.cards.service.entity.Card;
 import ru.testtask.cards.service.mapper.CardMapper;
 import ru.testtask.cards.utilits.encription.CardEncryptionUtil;
@@ -29,11 +30,6 @@ public class CardService {
     private UserRepository userRepository;
     private PaymentService paymentService;
 
-
-    public void create(Card card) {
-        //TODO
-        repository.save(CardMapper.toData(card));
-    }
 
     public List<Card> getAllUsersCards(Long userId) {
         UserEntity userEntity = userRepository.findById(userId)
@@ -159,6 +155,54 @@ public class CardService {
 
         payment.setStatus(PaymentStatus.SUCCESS);
         paymentService.savePayment(payment);
+    }
+
+
+    public void createCardForUser(Long userId, Card card) {
+        UserEntity userEntity = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        var cardEntity = CardMapper.toData(card);
+        cardEntity.setUser(userEntity);
+        repository.save(cardEntity);
+    }
+
+    public void blockCard(String cardNumber) {
+        var encrypted = CardEncryptionUtil.encrypt(cardNumber);
+        var card = repository.findCardEntitiesByEncryptedCardNumber(encrypted)
+                .orElseThrow(() -> new RuntimeException("Card not found"));
+
+        card.setStatus(CardStatus.BLOCKED);
+        repository.save(card);
+    }
+
+    public void activateCard(String cardNumber) {
+        var encrypted = CardEncryptionUtil.encrypt(cardNumber);
+        var card = repository.findCardEntitiesByEncryptedCardNumber(encrypted)
+                .orElseThrow(() -> new RuntimeException("Card not found"));
+
+        card.setStatus(CardStatus.ACTIVE);
+        repository.save(card);
+    }
+
+    public void deleteCard(String cardNumber) {
+        var encrypted = CardEncryptionUtil.encrypt(cardNumber);
+        var card = repository.findCardEntitiesByEncryptedCardNumber(encrypted)
+                .orElseThrow(() -> new RuntimeException("Card not found"));
+
+        repository.delete(card);
+    }
+
+    public void updateLimits(String cardNumber, BigDecimal dailyLimit, BigDecimal weeklyLimit, BigDecimal monthlyLimit) {
+        var encrypted = CardEncryptionUtil.encrypt(cardNumber);
+        var card = repository.findCardEntitiesByEncryptedCardNumber(encrypted)
+                .orElseThrow(() -> new RuntimeException("Card not found"));
+
+        if (dailyLimit != null) card.setDailyLimit(dailyLimit);
+        if (weeklyLimit != null) card.setWeeklyLimit(weeklyLimit);
+        if (monthlyLimit != null) card.setMonthlyLimit(monthlyLimit);
+
+        repository.save(card);
     }
 
 

@@ -1,4 +1,4 @@
-package ru.testtask.cards.service;
+package ru.testtask.cards.service.dto;
 
 import ru.testtask.cards.dataaccess.entity.PaymentsEntity;
 import ru.testtask.cards.service.entity.Card;
