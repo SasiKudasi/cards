@@ -110,7 +110,7 @@ public class CardService {
         if (!canMakeTransfer(amount, cardFromEntity, payment, cardToEntity)) return;
 
         try {
-            updateCardAmountAndLimits(amount, cardFromEntity, cardToEntity, payment);
+            updateCardAmount(amount, cardFromEntity, cardToEntity, payment);
 
         } catch (RuntimeException e) {
             paymentService.failPayment(payment.getId());
@@ -124,10 +124,22 @@ public class CardService {
             return false;
         }
         // если карты активны
-        if (cardFromEntity.getStatus() != CardStatus.ACTIVE && cardToEntity.getStatus() != CardStatus.ACTIVE) {
+        if (cardFromEntity.getStatus() != CardStatus.ACTIVE) {
             paymentService.failPayment(payment.getId());
             return false;
         }
+
+        if (cardToEntity != null) {
+            if (cardToEntity.getStatus() != CardStatus.ACTIVE) {
+                paymentService.failPayment(payment.getId());
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean canWithdraw(BigDecimal amount, CardEntity cardFromEntity, PaymentsEntity payment) {
         // если сумма не превышает установленные лимиты
         if (amount.compareTo(cardFromEntity.getDailyLimit()) > 0 ||
                 amount.compareTo(cardFromEntity.getWeeklyLimit()) > 0 ||
@@ -143,7 +155,7 @@ public class CardService {
         return true;
     }
 
-    private void updateCardAmountAndLimits(BigDecimal amount, CardEntity cardFromEntity, CardEntity cardToEntity, PaymentsEntity payment) {
+    private void updateCardAmount(BigDecimal amount, CardEntity cardFromEntity, CardEntity cardToEntity, PaymentsEntity payment) {
         var newFromAmount = cardFromEntity.getAmount().subtract(amount);
         var newToAmount = cardToEntity.getAmount().add(amount);
 
@@ -203,6 +215,43 @@ public class CardService {
         if (monthlyLimit != null) card.setMonthlyLimit(monthlyLimit);
 
         repository.save(card);
+    }
+
+    @Transactional
+    public void withdraw(Long userId, String cardNumber, BigDecimal amount) {
+        var user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        var encrypt = CardEncryptionUtil.encrypt(cardNumber);
+        var card = repository.findCardEntitiesByEncryptedCardNumber(encrypt)
+                .orElseThrow(() -> new RuntimeException("Card not found"));
+
+        if (!card.getUser().getId().equals(userId)) {
+            throw new RuntimeException("User is not the owner of the card");
+        }
+
+        var payment = paymentService.createPendingPayment(card, null, amount);
+
+        if (!canMakeTransfer(amount, card, payment, null)) return;
+        if (!canWithdraw(amount, card, payment)) return;
+
+        try {
+            var newDaily = card.getDailyLimit().subtract(amount);
+            var newWeekly = card.getWeeklyLimit().subtract(amount);
+            var newMonthly = card.getMonthlyLimit().subtract(amount);
+
+            card.setAmount(card.getAmount().subtract(amount));
+            card.setDailyLimit(newDaily);
+            card.setWeeklyLimit(newWeekly);
+            card.setMonthlyLimit(newMonthly);
+
+            repository.save(card);
+
+            payment.setStatus(PaymentStatus.SUCCESS);
+            paymentService.savePayment(payment);
+        } catch (Exception e) {
+            paymentService.failPayment(payment.getId());
+        }
     }
 
 
